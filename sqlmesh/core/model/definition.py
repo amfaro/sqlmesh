@@ -1704,6 +1704,7 @@ class SeedModel(_Model):
                 string_columns.append(name)
 
         for df in self._reader.read(batch_size=self.kind.batch_size):
+            df = df.copy()
             rename_dict = {}
             for column in columns_to_types:
                 if column not in df:
@@ -1742,10 +1743,15 @@ class SeedModel(_Model):
             for column in bool_columns:
                 df[column] = df[column].apply(lambda i: str_to_bool(str(i)))
 
-            df.loc[:, string_columns] = df[string_columns].mask(
-                cond=lambda x: x.notna(),  # type: ignore
-                other=df[string_columns].astype(str),  # type: ignore
-            )
+            for column in string_columns:
+                df[column] = (
+                    df[column]
+                    .mask(
+                        cond=lambda x: x.notna(),  # type: ignore
+                        other=df[column].astype(str),  # type: ignore
+                    )
+                    .astype(object)
+                )
             yield df.replace({np.nan: None})
 
     @property
@@ -1856,7 +1862,11 @@ class SeedModel(_Model):
 
     @cached_property
     def _reader(self) -> CsvSeedReader:
-        return self.seed.reader(dialect=self.dialect, settings=self.kind.csv_settings)
+        return self.seed.reader(
+            dialect=self.dialect,
+            settings=self.kind.csv_settings,
+            columns_to_types=self.columns_to_types_,
+        )
 
     @property
     def _data_hash_values_no_sql(self) -> t.List[str]:

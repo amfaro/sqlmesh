@@ -1274,7 +1274,7 @@ def test_seed_case_sensitive_columns(tmp_path):
     }
     df = next(model.render(context=None))
 
-    assert df["camelCaseId"].dtype == "int64"
+    assert str(df["camelCaseId"].dtype) == "Int64"
     assert df["camelCaseId"].iloc[0] == 1
 
     assert df["camelCaseBool"].dtype == "bool"
@@ -1527,7 +1527,7 @@ def test_seed_model_custom_types(tmp_path):
     assert df["b_b"].dtype == "bool"
     assert not df["b_b"].iloc[0]
 
-    assert df["i"].dtype == "int64"
+    assert str(df["i"].dtype) == "Int64"
     assert df["i"].iloc[0] == 321
 
     assert df["i_str"].dtype == "object"
@@ -1535,6 +1535,34 @@ def test_seed_model_custom_types(tmp_path):
 
     assert df["empty_date"].dtype == "object"
     assert df["empty_date"].iloc[0] is None
+
+
+def test_seed_model_declared_columns_control_csv_dtypes(tmp_path):
+    model_csv_path = (tmp_path / "model.csv").absolute()
+
+    with open(model_csv_path, "w", encoding="utf-8") as fd:
+        fd.write(
+            """code,quantity
+00123,1
+00007,
+"""
+        )
+
+    model = create_seed_model(
+        "test_db.test_model",
+        SeedKind(path=str(model_csv_path)),
+        columns={
+            "code": "text",
+            "quantity": "int",
+        },
+    )
+
+    df = next(model.render(context=None))
+
+    assert df["code"].to_list() == ["00123", "00007"]
+    assert not pd.api.types.is_float_dtype(df["quantity"])
+    assert df["quantity"].iloc[0] == 1
+    assert pd.isna(df["quantity"].iloc[1])
 
 
 def test_seed_with_special_characters_in_column(tmp_path, assert_exp_eq):

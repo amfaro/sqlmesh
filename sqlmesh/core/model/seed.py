@@ -89,10 +89,17 @@ class CsvSettings(PydanticModel):
 
 
 class CsvSeedReader:
-    def __init__(self, content: str, dialect: str, settings: CsvSettings):
+    def __init__(
+        self,
+        content: str,
+        dialect: str,
+        settings: CsvSettings,
+        columns_to_types: t.Optional[t.Dict[str, exp.DataType]] = None,
+    ):
         self.content = content
         self.dialect = dialect
         self.settings = settings
+        self._declared_columns_to_types = columns_to_types or {}
         self._df: t.Optional[pd.DataFrame] = None
 
     @property
@@ -120,12 +127,14 @@ class CsvSeedReader:
         import pandas as pd
 
         if self._df is None:
+            csv_settings = self._csv_settings()
             self._df = pd.read_csv(
                 StringIO(self.content),
                 index_col=False,
                 on_bad_lines="error",
                 low_memory=False,
-                **{k: v for k, v in self.settings.dict().items() if v is not None},
+                **csv_settings,
+                **self._read_csv_type_options(pd, csv_settings),
             )
             self._df = self._df.rename(
                 columns={
@@ -136,6 +145,49 @@ class CsvSeedReader:
 
         return self._df
 
+    def _csv_settings(self) -> t.Dict[str, t.Any]:
+        return {k: v for k, v in self.settings.dict().items() if v is not None}
+
+    def _read_csv_type_options(
+        self, pd: t.Any, csv_settings: t.Dict[str, t.Any]
+    ) -> t.Dict[str, t.Any]:
+        if not self._declared_columns_to_types:
+            return {}
+
+        csv_columns = pd.read_csv(
+            StringIO(self.content),
+            index_col=False,
+            on_bad_lines="error",
+            nrows=0,
+            **csv_settings,
+        ).columns
+        csv_columns_by_normalized_name = {
+            normalize_identifiers(column, dialect=self.dialect).name: column
+            for column in csv_columns
+        }
+
+        dtype = {}
+        parse_dates = []
+        for column, data_type in self._declared_columns_to_types.items():
+            csv_column = csv_columns_by_normalized_name.get(
+                normalize_identifiers(column, dialect=self.dialect).name
+            )
+            if csv_column is None:
+                continue
+
+            pandas_dtype = _pandas_dtype_for(data_type)
+            if pandas_dtype:
+                dtype[csv_column] = pandas_dtype
+            elif _should_parse_dates(data_type):
+                parse_dates.append(csv_column)
+
+        read_csv_options = {}
+        if dtype:
+            read_csv_options["dtype"] = dtype
+        if parse_dates:
+            read_csv_options["parse_dates"] = parse_dates
+        return read_csv_options
+
 
 class Seed(PydanticModel):
     """Represents content of a seed.
@@ -145,8 +197,29 @@ class Seed(PydanticModel):
 
     content: str
 
-    def reader(self, dialect: str = "", settings: t.Optional[CsvSettings] = None) -> CsvSeedReader:
-        return CsvSeedReader(self.content, dialect, settings or CsvSettings())
+    def reader(
+        self,
+        dialect: str = "",
+        settings: t.Optional[CsvSettings] = None,
+        columns_to_types: t.Optional[t.Dict[str, exp.DataType]] = None,
+    ) -> CsvSeedReader:
+        return CsvSeedReader(self.content, dialect, settings or CsvSettings(), columns_to_types)
+
+
+def _pandas_dtype_for(data_type: exp.DataType) -> t.Optional[str]:
+    if data_type.this in exp.DataType.TEXT_TYPES:
+        return "string"
+    if data_type.is_type(*exp.DataType.INTEGER_TYPES):
+        return "Int64"
+    if data_type.is_type("boolean"):
+        return "boolean"
+    if data_type.is_type("float", "double", "decimal", "numeric", "real"):
+        return "Float64"
+    return None
+
+
+def _should_parse_dates(data_type: exp.DataType) -> bool:
+    return data_type.is_type("date", "date32", "datetime", "timestamp", "timestamptz")
 
 
 def create_seed(path: str | Path) -> Seed:

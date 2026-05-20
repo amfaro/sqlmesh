@@ -58,6 +58,37 @@ def test_read_custom_settings():
     pd.testing.assert_frame_equal(next(dfs), expected_df)
 
 
+def test_read_declared_string_preserves_leading_zeroes():
+    content = """code,name
+00123,one
+00007,two
+"""
+    seed = Seed(content=content)
+    seed_reader = seed.reader(columns_to_types={"code": exp.DataType.build("text")})
+
+    df = next(seed_reader.read())
+
+    assert str(df["code"].dtype) == "string"
+    assert df["code"].to_list() == ["00123", "00007"]
+
+
+def test_read_declared_nullable_int_does_not_become_float():
+    content = """id,name
+1,one
+,two
+3,three
+"""
+    seed = Seed(content=content)
+    seed_reader = seed.reader(columns_to_types={"id": exp.DataType.build("int")})
+
+    df = next(seed_reader.read())
+
+    assert str(df["id"].dtype) == "Int64"
+    assert df["id"].iloc[0] == 1
+    assert pd.isna(df["id"].iloc[1])
+    assert df["id"].iloc[2] == 3
+
+
 def test_column_hashes():
     content = """key,value,ds
 1,one,2022-01-01
